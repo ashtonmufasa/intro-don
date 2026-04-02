@@ -1,15 +1,22 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
 
-const SERVER_URL = import.meta.env.PROD ? '' : 'http://localhost:3001';
+function getServerUrl(): string {
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+    return window.location.origin;
+  }
+  return 'http://localhost:3001';
+}
 
 export function useSocket() {
   const socketRef = useRef<Socket | null>(null);
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
-    const socket = io(SERVER_URL, {
-      transports: ['websocket', 'polling'],
+    const url = getServerUrl();
+    console.log('Connecting to:', url);
+    const socket = io(url, {
+      transports: ['polling', 'websocket'],
     });
 
     socket.on('connect', () => {
