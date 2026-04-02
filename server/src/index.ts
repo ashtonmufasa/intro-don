@@ -3,6 +3,7 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
 import { registerRoomHandlers } from './socket/roomHandler';
 import { registerGameHandlers } from './socket/gameHandler';
 import { handleSearch } from './services/deezerService';
@@ -39,12 +40,26 @@ app.get('/api/health', (_req, res) => {
 });
 
 // Serve static files in production
-if (process.env.NODE_ENV === 'production') {
-  const clientDist = path.join(__dirname, '../../client/dist');
+const clientDist = path.resolve(__dirname, '../../client/dist');
+if (fs.existsSync(clientDist)) {
+  console.log(`Serving static files from: ${clientDist}`);
   app.use(express.static(clientDist));
   app.get('*', (_req, res) => {
     res.sendFile(path.join(clientDist, 'index.html'));
   });
+} else {
+  console.log(`Client dist not found at: ${clientDist}`);
+  // Try alternative path
+  const altDist = path.resolve(process.cwd(), '../client/dist');
+  if (fs.existsSync(altDist)) {
+    console.log(`Serving static files from alt path: ${altDist}`);
+    app.use(express.static(altDist));
+    app.get('*', (_req, res) => {
+      res.sendFile(path.join(altDist, 'index.html'));
+    });
+  } else {
+    console.log(`Client dist also not found at: ${altDist}`);
+  }
 }
 
 // Socket.IO connection
