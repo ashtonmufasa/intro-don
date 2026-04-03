@@ -28,7 +28,6 @@ export default function WaitingRoom({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback
       const ta = document.createElement('textarea');
       ta.value = roomId;
       document.body.appendChild(ta);
@@ -86,7 +85,6 @@ export default function WaitingRoom({
         <p className="text-xs text-gray-500 mt-2">このIDを相手に伝えてください</p>
       </div>
 
-      {/* Disconnect message */}
       {disconnectMsg && (
         <div className="mb-4 p-3 bg-yellow-500/20 border border-yellow-500/50 rounded-xl text-yellow-300 text-sm w-full max-w-lg text-center">
           {disconnectMsg}
@@ -104,10 +102,7 @@ export default function WaitingRoom({
         <h3 className="text-sm text-gray-400 mb-3">プレイヤー ({players.length}/2)</h3>
         <div className="space-y-2">
           {players.map((p, i) => (
-            <div
-              key={i}
-              className="flex items-center justify-between bg-dark-card rounded-xl px-4 py-3"
-            >
+            <div key={i} className="flex items-center justify-between bg-dark-card rounded-xl px-4 py-3">
               <div className="flex items-center gap-3">
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${i === 0 ? 'bg-neon-pink/30 text-neon-pink' : 'bg-neon-cyan/30 text-neon-cyan'}`}>
                   {p.nickname.charAt(0)}
@@ -115,9 +110,7 @@ export default function WaitingRoom({
                 <span className="font-bold">{p.nickname}</span>
               </div>
               {p.isHost && (
-                <span className="text-xs bg-neon-yellow/20 text-neon-yellow px-2 py-1 rounded-full">
-                  ホスト
-                </span>
+                <span className="text-xs bg-neon-yellow/20 text-neon-yellow px-2 py-1 rounded-full">ホスト</span>
               )}
             </div>
           ))}
@@ -135,50 +128,97 @@ export default function WaitingRoom({
           {isHost ? 'ゲーム設定' : 'ゲーム設定（ホストが設定中）'}
         </h3>
 
-        {/* Genre */}
+        {/* Mode Toggle */}
         <div className="mb-5">
-          <label className="block text-sm text-gray-300 mb-2">ジャンル</label>
-          <div className="flex flex-wrap gap-2">
-            {GENRES.map(g => (
-              <button
-                key={g}
-                onClick={() => isHost && toggleGenre(g)}
-                disabled={!isHost}
-                className={`px-3 py-1.5 rounded-full text-sm transition-all ${
-                  settings.genres.includes(g)
-                    ? 'bg-neon-pink/30 text-neon-pink border border-neon-pink/50'
-                    : 'bg-dark-card text-gray-400 border border-gray-600'
-                } ${isHost ? 'hover:border-neon-pink/50 cursor-pointer' : 'cursor-default'}`}
-              >
-                {g}
-              </button>
-            ))}
+          <label className="block text-sm text-gray-300 mb-2">出題モード</label>
+          <div className="flex gap-2">
+            <button
+              onClick={() => isHost && onUpdateSettings({ mode: 'genre' })}
+              disabled={!isHost}
+              className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all ${
+                settings.mode === 'genre'
+                  ? 'bg-neon-pink/30 text-neon-pink border border-neon-pink/50'
+                  : 'bg-dark-card text-gray-400 border border-gray-600'
+              } ${isHost ? 'cursor-pointer' : 'cursor-default'}`}
+            >
+              ジャンルから出題
+            </button>
+            <button
+              onClick={() => isHost && onUpdateSettings({ mode: 'artist' })}
+              disabled={!isHost}
+              className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all ${
+                settings.mode === 'artist'
+                  ? 'bg-neon-cyan/30 text-neon-cyan border border-neon-cyan/50'
+                  : 'bg-dark-card text-gray-400 border border-gray-600'
+              } ${isHost ? 'cursor-pointer' : 'cursor-default'}`}
+            >
+              アーティスト指定
+            </button>
           </div>
         </div>
 
-        {/* Decade */}
-        <div className="mb-5">
-          <label className="block text-sm text-gray-300 mb-2">年代</label>
-          <div className="flex flex-wrap gap-2">
-            {DECADES.map(d => (
-              <button
-                key={d}
-                onClick={() => isHost && toggleDecade(d)}
-                disabled={!isHost}
-                className={`px-3 py-1.5 rounded-full text-sm transition-all ${
-                  settings.decades.includes(d)
-                    ? 'bg-neon-cyan/30 text-neon-cyan border border-neon-cyan/50'
-                    : 'bg-dark-card text-gray-400 border border-gray-600'
-                } ${isHost ? 'hover:border-neon-cyan/50 cursor-pointer' : 'cursor-default'}`}
-              >
-                {d}
-              </button>
-            ))}
+        {/* Genre mode settings */}
+        {settings.mode === 'genre' && (
+          <>
+            <div className="mb-5">
+              <label className="block text-sm text-gray-300 mb-2">ジャンル</label>
+              <div className="flex flex-wrap gap-2">
+                {GENRES.map(g => (
+                  <button
+                    key={g}
+                    onClick={() => isHost && toggleGenre(g)}
+                    disabled={!isHost}
+                    className={`px-3 py-1.5 rounded-full text-sm transition-all ${
+                      settings.genres.includes(g)
+                        ? 'bg-neon-pink/30 text-neon-pink border border-neon-pink/50'
+                        : 'bg-dark-card text-gray-400 border border-gray-600'
+                    } ${isHost ? 'hover:border-neon-pink/50 cursor-pointer' : 'cursor-default'}`}
+                  >
+                    {g}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mb-5">
+              <label className="block text-sm text-gray-300 mb-2">年代</label>
+              <div className="flex flex-wrap gap-2">
+                {DECADES.map(d => (
+                  <button
+                    key={d}
+                    onClick={() => isHost && toggleDecade(d)}
+                    disabled={!isHost}
+                    className={`px-3 py-1.5 rounded-full text-sm transition-all ${
+                      settings.decades.includes(d)
+                        ? 'bg-neon-cyan/30 text-neon-cyan border border-neon-cyan/50'
+                        : 'bg-dark-card text-gray-400 border border-gray-600'
+                    } ${isHost ? 'hover:border-neon-cyan/50 cursor-pointer' : 'cursor-default'}`}
+                  >
+                    {d}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Artist mode settings */}
+        {settings.mode === 'artist' && (
+          <div className="mb-5">
+            <label className="block text-sm text-gray-300 mb-2">アーティスト名</label>
+            <input
+              type="text"
+              value={settings.artistName}
+              onChange={(e) => isHost && onUpdateSettings({ artistName: e.target.value })}
+              disabled={!isHost}
+              placeholder="例: YOASOBI, BTS, Taylor Swift..."
+              className="w-full bg-dark-card border border-gray-600 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-neon-cyan focus:ring-1 focus:ring-neon-cyan transition-colors disabled:opacity-50"
+            />
           </div>
-        </div>
+        )}
 
         {/* Question count slider */}
-        <div className="mb-5">
+        <div className="mb-2">
           <div className="flex justify-between text-sm mb-1">
             <span className="text-gray-300">問題数</span>
             <span className="font-orbitron text-neon-yellow">{settings.questionCount}</span>
@@ -196,28 +236,6 @@ export default function WaitingRoom({
           <div className="flex justify-between text-xs text-gray-500">
             <span>5</span>
             <span>30</span>
-          </div>
-        </div>
-
-        {/* Time limit slider */}
-        <div className="mb-2">
-          <div className="flex justify-between text-sm mb-1">
-            <span className="text-gray-300">制限時間</span>
-            <span className="font-orbitron text-neon-yellow">{settings.timeLimit}秒</span>
-          </div>
-          <input
-            type="range"
-            min={5}
-            max={30}
-            step={1}
-            value={settings.timeLimit}
-            onChange={(e) => isHost && onUpdateSettings({ timeLimit: parseInt(e.target.value) })}
-            disabled={!isHost}
-            className="w-full accent-neon-cyan"
-          />
-          <div className="flex justify-between text-xs text-gray-500">
-            <span>5秒</span>
-            <span>30秒</span>
           </div>
         </div>
       </div>

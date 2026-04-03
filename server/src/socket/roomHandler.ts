@@ -42,6 +42,7 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
       questionResults: [],
       buzzerLocked: true,
       buzzerWinner: null,
+      passedPlayers: [],
       answerTimer: null,
       questionTimer: null,
     };

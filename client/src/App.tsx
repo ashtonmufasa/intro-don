@@ -13,10 +13,11 @@ export interface PlayerInfo {
 }
 
 export interface GameSettings {
+  mode: 'genre' | 'artist';
   genres: string[];
   decades: string[];
+  artistName: string;
   questionCount: number;
-  timeLimit: number;
 }
 
 export interface QuestionResult {
@@ -42,22 +43,23 @@ function App() {
   const [isHost, setIsHost] = useState(false);
   const [players, setPlayers] = useState<PlayerInfo[]>([]);
   const [settings, setSettings] = useState<GameSettings>({
+    mode: 'genre',
     genres: ['J-Pop'],
     decades: ['2020s'],
+    artistName: '',
     questionCount: 10,
-    timeLimit: 15,
   });
   const [error, setError] = useState('');
 
   // Game state
-  const [gamePhase, setGamePhase] = useState<'loading' | 'countdown' | 'playing' | 'buzzer-won' | 'answering' | 'result' | 'time-up'>('loading');
+  const [gamePhase, setGamePhase] = useState<'loading' | 'countdown' | 'playing' | 'buzzer-won' | 'answering' | 'result' | 'time-up' | 'passed'>('loading');
   const [questionNumber, setQuestionNumber] = useState(0);
   const [totalQuestions, setTotalQuestions] = useState(0);
   const [countdownNum, setCountdownNum] = useState(3);
   const [buzzerWinner, setBuzzerWinner] = useState<string | null>(null);
   const [isMyBuzzer, setIsMyBuzzer] = useState(false);
   const [lastResult, setLastResult] = useState<QuestionResult | null>(null);
-  const [previewUrl, setPreviewUrl] = useState('');
+  const [myPassed, setMyPassed] = useState(false);
 
   // Result state
   const [finalResults, setFinalResults] = useState<QuestionResult[]>([]);
@@ -106,8 +108,8 @@ function App() {
       setBuzzerWinner(null);
       setIsMyBuzzer(false);
       setLastResult(null);
+      setMyPassed(false);
 
-      // Animate countdown: 3, 2, 1
       setCountdownNum(3);
       setTimeout(() => setCountdownNum(2), 1000);
       setTimeout(() => setCountdownNum(1), 2000);
@@ -116,7 +118,6 @@ function App() {
     cleanups.push(on('game:play-intro', (data: { questionNumber: number; totalQuestions: number; previewUrl: string }) => {
       setGamePhase('playing');
       setQuestionNumber(data.questionNumber);
-      setPreviewUrl(data.previewUrl);
       audio.play(data.previewUrl);
     }));
 
@@ -130,6 +131,27 @@ function App() {
 
     cleanups.push(on('game:answer-result', (data: QuestionResult & { players: PlayerInfo[] }) => {
       setGamePhase('result');
+      setLastResult(data);
+      setPlayers(data.players);
+    }));
+
+    cleanups.push(on('game:answer-turn-changed', (data: { message: string; players: PlayerInfo[] }) => {
+      setPlayers(data.players);
+      setGamePhase('playing');
+      setBuzzerWinner(null);
+      setIsMyBuzzer(false);
+      // Re-play audio? The intro already stopped. Player can still buzz.
+    }));
+
+    cleanups.push(on('game:player-passed', (data: { nickname: string; passedPlayers: string[] }) => {
+      if (data.nickname === nickname) {
+        setMyPassed(true);
+      }
+    }));
+
+    cleanups.push(on('game:pass-complete', (data: QuestionResult & { players: PlayerInfo[] }) => {
+      audio.stop();
+      setGamePhase('passed');
       setLastResult(data);
       setPlayers(data.players);
     }));
@@ -168,7 +190,6 @@ function App() {
     };
   }, [on, nickname, audio]);
 
-  // Create room
   const createRoom = useCallback((nick: string) => {
     setNickname(nick);
     setError('');
@@ -184,7 +205,6 @@ function App() {
     });
   }, [emit]);
 
-  // Join room
   const joinRoom = useCallback((nick: string, rId: string) => {
     setNickname(nick);
     setError('');
@@ -201,14 +221,12 @@ function App() {
     });
   }, [emit]);
 
-  // Update settings
   const updateSettings = useCallback((newSettings: Partial<GameSettings>) => {
     const updated = { ...settings, ...newSettings };
     setSettings(updated);
     emit('room:update-settings', { roomId, settings: newSettings });
   }, [emit, roomId, settings]);
 
-  // Start game
   const startGame = useCallback(() => {
     setError('');
     emit('game:start', { roomId }, (response: any) => {
@@ -218,22 +236,22 @@ function App() {
     });
   }, [emit, roomId]);
 
-  // Press buzzer
   const pressBuzzer = useCallback(() => {
     emit('buzzer:press', { roomId, timestamp: Date.now() });
   }, [emit, roomId]);
 
-  // Submit answer
   const submitAnswer = useCallback((answer: string) => {
     emit('answer:submit', { roomId, answer });
   }, [emit, roomId]);
 
-  // Play again
+  const passBuzzer = useCallback(() => {
+    emit('buzzer:pass', { roomId });
+  }, [emit, roomId]);
+
   const playAgain = useCallback(() => {
     emit('game:play-again', { roomId });
   }, [emit, roomId]);
 
-  // Go to top
   const goToTop = useCallback(() => {
     setScreen('top');
     setRoomId('');
@@ -277,9 +295,10 @@ function App() {
           isMyBuzzer={isMyBuzzer}
           lastResult={lastResult}
           isPlaying={audio.isPlaying}
-          settings={settings}
+          myPassed={myPassed}
           onPressBuzzer={pressBuzzer}
           onSubmitAnswer={submitAnswer}
+          onPass={passBuzzer}
         />
       )}
       {screen === 'result' && (

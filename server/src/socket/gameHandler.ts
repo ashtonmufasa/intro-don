@@ -1,10 +1,8 @@
 import { Server, Socket } from 'socket.io';
 import { rooms } from './roomHandler';
-import { fetchQuestions } from '../services/deezerService';
+import { fetchQuestions, fetchQuestionsByArtist } from '../services/deezerService';
 import { fuzzyMatch } from '../utils/fuzzyMatch';
 import { QuestionResult } from '../types/game';
-
-const ANSWER_TIME_LIMIT = 10000; // 10 seconds for answering after buzzer
 
 export function registerGameHandlers(io: Server, socket: Socket) {
 
@@ -36,16 +34,29 @@ export function registerGameHandlers(io: Server, socket: Socket) {
     io.to(data.roomId).emit('game:loading', { message: '楽曲を読み込み中...' });
 
     try {
-      // Fetch questions from Deezer
-      const questions = await fetchQuestions(
-        room.settings.genres,
-        room.settings.decades,
-        room.settings.questionCount
-      );
+      let questions;
+
+      if (room.settings.mode === 'artist' && room.settings.artistName.trim()) {
+        // Artist mode
+        questions = await fetchQuestionsByArtist(
+          room.settings.artistName.trim(),
+          room.settings.questionCount
+        );
+      } else {
+        // Genre mode
+        questions = await fetchQuestions(
+          room.settings.genres,
+          room.settings.decades,
+          room.settings.questionCount
+        );
+      }
 
       if (questions.length === 0) {
-        callback({ success: false, error: '楽曲が見つかりませんでした。ジャンルや年代を変更してください。' });
-        io.to(data.roomId).emit('game:loading-failed', { message: '楽曲が見つかりませんでした' });
+        const errorMsg = room.settings.mode === 'artist'
+          ? `「${room.settings.artistName}」の楽曲が見つかりませんでした。アーティスト名を確認してください。`
+          : '楽曲が見つかりませんでした。ジャンルや年代を変更してください。';
+        callback({ success: false, error: errorMsg });
+        io.to(data.roomId).emit('game:loading-failed', { message: errorMsg });
         return;
       }
 
@@ -54,14 +65,12 @@ export function registerGameHandlers(io: Server, socket: Socket) {
 
       callback({ success: true, totalQuestions: questions.length });
 
-      // Start the game with countdown
       io.to(data.roomId).emit('game:started', {
         totalQuestions: questions.length,
         settings: room.settings,
         players: room.players.map(p => ({ nickname: p.nickname, isHost: p.isHost, score: 0 })),
       });
 
-      // Start first question after a brief delay
       setTimeout(() => startQuestion(io, data.roomId), 1500);
 
     } catch (error) {
@@ -76,6 +85,9 @@ export function registerGameHandlers(io: Server, socket: Socket) {
     if (!room || room.state !== 'playing') return;
     if (room.buzzerLocked) return;
 
+    // Check if this player already passed
+    if (room.passedPlayers.includes(socket.id)) return;
+
     // First press wins
     room.buzzerLocked = true;
     room.buzzerWinner = socket.id;
@@ -83,23 +95,12 @@ export function registerGameHandlers(io: Server, socket: Socket) {
     const winner = room.players.find(p => p.id === socket.id);
     if (!winner) return;
 
-    // Stop the question timer
-    if (room.questionTimer) {
-      clearTimeout(room.questionTimer);
-      room.questionTimer = null;
-    }
-
-    // Notify all players
     io.to(data.roomId).emit('game:buzzer-result', {
       winnerNickname: winner.nickname,
       winnerId: socket.id,
     });
 
-    // Start answer timer (10 seconds)
-    room.answerTimer = setTimeout(() => {
-      // Time's up for answering
-      handleAnswerTimeout(io, data.roomId);
-    }, ANSWER_TIME_LIMIT);
+    // No answer timer — unlimited time
   });
 
   // Answer submit
@@ -108,7 +109,6 @@ export function registerGameHandlers(io: Server, socket: Socket) {
     if (!room || room.state !== 'playing') return;
     if (room.buzzerWinner !== socket.id) return;
 
-    // Clear answer timer
     if (room.answerTimer) {
       clearTimeout(room.answerTimer);
       room.answerTimer = null;
@@ -136,20 +136,96 @@ export function registerGameHandlers(io: Server, socket: Socket) {
     };
     room.questionResults.push(result);
 
-    // Send answer result to all
     io.to(data.roomId).emit('game:answer-result', {
       ...result,
       players: room.players.map(p => ({ nickname: p.nickname, isHost: p.isHost, score: p.score })),
     });
 
-    // Proceed to next question after delay
-    setTimeout(() => {
-      if (room.currentQuestion + 1 < room.questions.length) {
-        startQuestion(io, data.roomId);
-      } else {
-        endGame(io, data.roomId);
-      }
-    }, 3000);
+    // If wrong answer, give the other player a chance (unlock buzzer)
+    if (!isCorrect) {
+      setTimeout(() => {
+        if (!room) return;
+        // Add this player to passed (they got it wrong, can't buzz again)
+        if (!room.passedPlayers.includes(socket.id)) {
+          room.passedPlayers.push(socket.id);
+        }
+
+        // Check if all players have either passed or answered wrong
+        const allDone = room.players.every(p => room.passedPlayers.includes(p.id));
+        if (allDone) {
+          // Skip to next question
+          setTimeout(() => advanceQuestion(io, data.roomId), 1500);
+        } else {
+          // Re-open buzzer for other player
+          room.buzzerLocked = false;
+          room.buzzerWinner = null;
+          io.to(data.roomId).emit('game:answer-turn-changed', {
+            message: '相手に回答権が移りました',
+            players: room.players.map(p => ({ nickname: p.nickname, isHost: p.isHost, score: p.score })),
+          });
+        }
+      }, 2000);
+    } else {
+      // Correct — move to next question
+      setTimeout(() => advanceQuestion(io, data.roomId), 3000);
+    }
+  });
+
+  // Pass (during buzzer phase or answering phase)
+  socket.on('buzzer:pass', (data: { roomId: string }) => {
+    const room = rooms.get(data.roomId);
+    if (!room || room.state !== 'playing') return;
+
+    // If this player is currently answering, they forfeit answer
+    if (room.buzzerWinner === socket.id) {
+      room.buzzerWinner = null;
+    }
+
+    // Mark player as passed
+    if (!room.passedPlayers.includes(socket.id)) {
+      room.passedPlayers.push(socket.id);
+    }
+
+    const player = room.players.find(p => p.id === socket.id);
+    io.to(data.roomId).emit('game:player-passed', {
+      nickname: player?.nickname || '',
+      passedPlayers: room.passedPlayers.map(id => {
+        const p = room.players.find(pl => pl.id === id);
+        return p?.nickname || '';
+      }),
+    });
+
+    // Check if all players have passed
+    const allPassed = room.players.every(p => room.passedPlayers.includes(p.id));
+    if (allPassed) {
+      // Both passed — show correct answer and skip
+      room.buzzerLocked = true;
+      const currentQ = room.questions[room.currentQuestion];
+      if (!currentQ) return;
+
+      const result: QuestionResult = {
+        questionIndex: room.currentQuestion,
+        trackName: currentQ.trackName,
+        artistName: currentQ.artistName,
+        albumImageUrl: currentQ.albumImageUrl,
+        buzzWinner: null,
+        answer: null,
+        isCorrect: false,
+        correctAnswer: currentQ.trackName,
+      };
+      room.questionResults.push(result);
+
+      io.to(data.roomId).emit('game:pass-complete', {
+        ...result,
+        players: room.players.map(p => ({ nickname: p.nickname, isHost: p.isHost, score: p.score })),
+      });
+
+      setTimeout(() => advanceQuestion(io, data.roomId), 3000);
+    } else {
+      // One player passed, other can still buzz
+      room.buzzerLocked = false;
+      room.buzzerWinner = null;
+    }
   });
 
   // Play again
@@ -163,6 +239,7 @@ export function registerGameHandlers(io: Server, socket: Socket) {
     room.questionResults = [];
     room.buzzerLocked = true;
     room.buzzerWinner = null;
+    room.passedPlayers = [];
     room.players.forEach(p => p.score = 0);
 
     io.to(data.roomId).emit('game:reset', {
@@ -179,6 +256,7 @@ function startQuestion(io: Server, roomId: string) {
   room.currentQuestion += 1;
   room.buzzerLocked = true;
   room.buzzerWinner = null;
+  room.passedPlayers = [];
 
   const qIndex = room.currentQuestion;
   const question = room.questions[qIndex];
@@ -190,94 +268,29 @@ function startQuestion(io: Server, roomId: string) {
     totalQuestions: room.questions.length,
   });
 
-  // After countdown (3 seconds), play intro
+  // After countdown (3 seconds), play intro — no time limit
   setTimeout(() => {
     room.buzzerLocked = false;
 
-    // Send preview URL to play
     io.to(roomId).emit('game:play-intro', {
       questionNumber: qIndex + 1,
       totalQuestions: room.questions.length,
       previewUrl: question.previewUrl,
     });
 
-    // Start question timer
-    room.questionTimer = setTimeout(() => {
-      handleTimeUp(io, roomId);
-    }, room.settings.timeLimit * 1000);
-
+    // No question timer — unlimited listening time
   }, 3000);
 }
 
-function handleTimeUp(io: Server, roomId: string) {
+function advanceQuestion(io: Server, roomId: string) {
   const room = rooms.get(roomId);
   if (!room) return;
 
-  room.buzzerLocked = true;
-
-  const currentQ = room.questions[room.currentQuestion];
-  if (!currentQ) return;
-
-  const result: QuestionResult = {
-    questionIndex: room.currentQuestion,
-    trackName: currentQ.trackName,
-    artistName: currentQ.artistName,
-    albumImageUrl: currentQ.albumImageUrl,
-    buzzWinner: null,
-    answer: null,
-    isCorrect: false,
-    correctAnswer: currentQ.trackName,
-  };
-  room.questionResults.push(result);
-
-  io.to(roomId).emit('game:time-up', {
-    ...result,
-    players: room.players.map(p => ({ nickname: p.nickname, isHost: p.isHost, score: p.score })),
-  });
-
-  // Next question after delay
-  setTimeout(() => {
-    if (room.currentQuestion + 1 < room.questions.length) {
-      startQuestion(io, roomId);
-    } else {
-      endGame(io, roomId);
-    }
-  }, 3000);
-}
-
-function handleAnswerTimeout(io: Server, roomId: string) {
-  const room = rooms.get(roomId);
-  if (!room) return;
-
-  const currentQ = room.questions[room.currentQuestion];
-  const buzzerPlayer = room.players.find(p => p.id === room.buzzerWinner);
-  if (!currentQ) return;
-
-  const result: QuestionResult = {
-    questionIndex: room.currentQuestion,
-    trackName: currentQ.trackName,
-    artistName: currentQ.artistName,
-    albumImageUrl: currentQ.albumImageUrl,
-    buzzWinner: buzzerPlayer?.nickname || null,
-    answer: null,
-    isCorrect: false,
-    correctAnswer: currentQ.trackName,
-  };
-  room.questionResults.push(result);
-
-  io.to(roomId).emit('game:answer-result', {
-    ...result,
-    players: room.players.map(p => ({ nickname: p.nickname, isHost: p.isHost, score: p.score })),
-  });
-
-  // Next question
-  setTimeout(() => {
-    if (room.currentQuestion + 1 < room.questions.length) {
-      startQuestion(io, roomId);
-    } else {
-      endGame(io, roomId);
-    }
-  }, 3000);
+  if (room.currentQuestion + 1 < room.questions.length) {
+    startQuestion(io, roomId);
+  } else {
+    endGame(io, roomId);
+  }
 }
 
 function endGame(io: Server, roomId: string) {

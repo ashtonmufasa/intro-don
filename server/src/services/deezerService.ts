@@ -1,4 +1,4 @@
-import { QuestionData, GENRE_QUERIES, DECADE_KEYWORDS } from '../types/game';
+import { QuestionData, GENRE_DECADE_ARTISTS, GENRE_QUERIES, DECADE_KEYWORDS } from '../types/game';
 
 const DEEZER_API = 'https://api.deezer.com';
 
@@ -37,82 +37,42 @@ function shuffleArray<T>(arr: T[]): T[] {
   return a;
 }
 
-export async function fetchQuestions(
-  genres: string[],
-  decades: string[],
+function filterValidTracks(tracks: DeezerTrack[]): DeezerTrack[] {
+  return tracks.filter(t => t.preview && t.preview.length > 0);
+}
+
+// Search by artist name for accurate results
+async function searchByArtist(artistName: string, limit: number = 25): Promise<DeezerTrack[]> {
+  const tracks = await searchDeezer(`artist:"${artistName}"`, limit);
+  const valid = filterValidTracks(tracks);
+  if (valid.length > 0) return valid;
+  // Fallback without quotes
+  const fallback = await searchDeezer(artistName, limit);
+  return filterValidTracks(fallback);
+}
+
+// Fetch questions by artist name (artist mode)
+export async function fetchQuestionsByArtist(
+  artistName: string,
   count: number
 ): Promise<QuestionData[]> {
   const allTracks: Map<number, DeezerTrack> = new Map();
 
-  // Build search queries by combining genre and decade keywords
-  const queries: string[] = [];
-
-  for (const genre of genres) {
-    const genreKeywords = GENRE_QUERIES[genre] || [genre.toLowerCase()];
-
-    if (decades.length > 0) {
-      for (const decade of decades) {
-        const decadeKeywords = DECADE_KEYWORDS[decade] || [];
-        // Combine first genre keyword with first decade keyword
-        for (const gk of genreKeywords.slice(0, 2)) {
-          for (const dk of decadeKeywords.slice(0, 2)) {
-            queries.push(`${gk} ${dk}`);
-          }
-        }
-      }
-    } else {
-      for (const gk of genreKeywords) {
-        queries.push(gk);
-      }
-    }
+  // Primary search
+  const tracks = await searchByArtist(artistName, 50);
+  for (const track of tracks) {
+    allTracks.set(track.id, track);
   }
 
-  // Also add plain genre queries for more results
-  for (const genre of genres) {
-    const genreKeywords = GENRE_QUERIES[genre] || [genre.toLowerCase()];
-    queries.push(genreKeywords[0]);
-  }
-
-  // Deduplicate queries
-  const uniqueQueries = [...new Set(queries)];
-
-  // Execute searches with rate limiting (max 3 concurrent)
-  const batchSize = 3;
-  for (let i = 0; i < uniqueQueries.length; i += batchSize) {
-    const batch = uniqueQueries.slice(i, i + batchSize);
-    const results = await Promise.all(batch.map(q => searchDeezer(q, 50)));
-
-    for (const tracks of results) {
-      for (const track of tracks) {
-        // Only include tracks with preview URLs
-        if (track.preview && track.preview.length > 0) {
-          allTracks.set(track.id, track);
-        }
-      }
-    }
-
-    // Small delay between batches to respect rate limits
-    if (i + batchSize < uniqueQueries.length) {
-      await new Promise(resolve => setTimeout(resolve, 300));
-    }
-  }
-
-  // If not enough tracks, try broader searches
+  // If not enough, try broader search
   if (allTracks.size < count) {
-    const fallbackQueries = ['top hits', 'popular music', 'ヒット曲', 'chart hits'];
-    for (const q of fallbackQueries) {
-      if (allTracks.size >= count * 2) break;
-      const tracks = await searchDeezer(q, 50);
-      for (const track of tracks) {
-        if (track.preview && track.preview.length > 0) {
-          allTracks.set(track.id, track);
-        }
-      }
-      await new Promise(resolve => setTimeout(resolve, 300));
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const moreTracks = await searchDeezer(artistName, 50);
+    for (const track of filterValidTracks(moreTracks)) {
+      allTracks.set(track.id, track);
     }
   }
 
-  // Shuffle and pick the requested number
   const shuffled = shuffleArray([...allTracks.values()]);
   const selected = shuffled.slice(0, count);
 
@@ -125,7 +85,98 @@ export async function fetchQuestions(
   }));
 }
 
-// Express route handler for generic search (used by client if needed)
+// Fetch questions by genre + decade (genre mode) - improved with artist lists
+export async function fetchQuestions(
+  genres: string[],
+  decades: string[],
+  count: number
+): Promise<QuestionData[]> {
+  const allTracks: Map<number, DeezerTrack> = new Map();
+
+  // Collect artists from the GENRE_DECADE_ARTISTS mapping
+  const artists: string[] = [];
+  for (const genre of genres) {
+    const genreArtists = GENRE_DECADE_ARTISTS[genre];
+    if (genreArtists) {
+      if (decades.length > 0) {
+        for (const decade of decades) {
+          const decadeArtists = genreArtists[decade];
+          if (decadeArtists) {
+            artists.push(...decadeArtists);
+          }
+        }
+      } else {
+        // All decades
+        for (const decadeArtists of Object.values(genreArtists)) {
+          artists.push(...decadeArtists);
+        }
+      }
+    }
+  }
+
+  // Deduplicate and shuffle artists
+  const uniqueArtists = shuffleArray([...new Set(artists)]);
+
+  if (uniqueArtists.length > 0) {
+    // Search by artist names (much more accurate than keyword search)
+    const batchSize = 3;
+    for (let i = 0; i < uniqueArtists.length && allTracks.size < count * 3; i += batchSize) {
+      const batch = uniqueArtists.slice(i, i + batchSize);
+      const results = await Promise.all(batch.map(a => searchByArtist(a, 15)));
+
+      for (const tracks of results) {
+        for (const track of tracks) {
+          allTracks.set(track.id, track);
+        }
+      }
+
+      if (i + batchSize < uniqueArtists.length) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+    }
+  }
+
+  // Fallback to keyword search if not enough tracks
+  if (allTracks.size < count) {
+    const queries: string[] = [];
+    for (const genre of genres) {
+      const genreKeywords = GENRE_QUERIES[genre] || [genre.toLowerCase()];
+      if (decades.length > 0) {
+        for (const decade of decades) {
+          const decadeKeywords = DECADE_KEYWORDS[decade] || [];
+          for (const gk of genreKeywords.slice(0, 1)) {
+            for (const dk of decadeKeywords.slice(0, 1)) {
+              queries.push(`${gk} ${dk}`);
+            }
+          }
+        }
+      } else {
+        queries.push(genreKeywords[0]);
+      }
+    }
+
+    for (const q of queries) {
+      if (allTracks.size >= count * 2) break;
+      const tracks = await searchDeezer(q, 50);
+      for (const track of filterValidTracks(tracks)) {
+        allTracks.set(track.id, track);
+      }
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+  }
+
+  const shuffled = shuffleArray([...allTracks.values()]);
+  const selected = shuffled.slice(0, count);
+
+  return selected.map(track => ({
+    id: track.id,
+    previewUrl: track.preview,
+    trackName: track.title,
+    artistName: track.artist.name,
+    albumImageUrl: track.album.cover_medium,
+  }));
+}
+
 export async function handleSearch(query: string, limit: number = 25) {
   const tracks = await searchDeezer(query, limit);
   return { data: tracks };

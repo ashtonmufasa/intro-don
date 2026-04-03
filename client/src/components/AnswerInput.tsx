@@ -2,29 +2,16 @@ import { useState, useEffect, useRef } from 'react';
 
 interface AnswerInputProps {
   onSubmit: (answer: string) => void;
-  timeLimit: number; // seconds
+  onPass: () => void;
 }
 
-export default function AnswerInput({ onSubmit, timeLimit }: AnswerInputProps) {
+export default function AnswerInput({ onSubmit, onPass }: AnswerInputProps) {
   const [answer, setAnswer] = useState('');
-  const [remaining, setRemaining] = useState(timeLimit);
   const inputRef = useRef<HTMLInputElement>(null);
   const submittedRef = useRef(false);
 
   useEffect(() => {
     inputRef.current?.focus();
-
-    const interval = setInterval(() => {
-      setRemaining(prev => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(interval);
   }, []);
 
   const handleSubmit = () => {
@@ -40,20 +27,10 @@ export default function AnswerInput({ onSubmit, timeLimit }: AnswerInputProps) {
     }
   };
 
-  const urgency = remaining <= 3;
-
   return (
     <div className="w-full max-w-md mx-auto animate-slide-up">
-      {/* Timer */}
-      <div className="text-center mb-4">
-        <span className={`font-orbitron text-4xl font-bold ${urgency ? 'text-red-500 animate-pulse' : 'text-neon-yellow'}`}>
-          {remaining}
-        </span>
-        <span className="text-gray-400 text-sm ml-1">秒</span>
-      </div>
-
       {/* Input */}
-      <div className="flex gap-2">
+      <div className="flex gap-2 mb-3">
         <input
           ref={inputRef}
           type="text"
@@ -72,6 +49,13 @@ export default function AnswerInput({ onSubmit, timeLimit }: AnswerInputProps) {
           回答！
         </button>
       </div>
+
+      <button
+        onClick={onPass}
+        className="px-6 py-2 bg-gray-700 rounded-xl text-gray-300 text-sm transition-all hover:bg-gray-600 active:scale-95"
+      >
+        パス（回答権を放棄）
+      </button>
     </div>
   );
 }
