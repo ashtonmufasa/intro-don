@@ -3,16 +3,36 @@ import { useState, useEffect, useRef } from 'react';
 interface AnswerInputProps {
   onSubmit: (answer: string) => void;
   onPass: () => void;
+  timeLimit?: number; // seconds, 0 or undefined = unlimited
 }
 
-export default function AnswerInput({ onSubmit, onPass }: AnswerInputProps) {
+export default function AnswerInput({ onSubmit, onPass, timeLimit = 0 }: AnswerInputProps) {
   const [answer, setAnswer] = useState('');
+  const [remaining, setRemaining] = useState(timeLimit);
   const inputRef = useRef<HTMLInputElement>(null);
   const submittedRef = useRef(false);
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  // Countdown timer
+  useEffect(() => {
+    if (!timeLimit || timeLimit <= 0) return;
+    setRemaining(timeLimit);
+
+    const interval = setInterval(() => {
+      setRemaining(prev => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [timeLimit]);
 
   const handleSubmit = () => {
     if (submittedRef.current) return;
@@ -27,8 +47,19 @@ export default function AnswerInput({ onSubmit, onPass }: AnswerInputProps) {
     }
   };
 
+  const isUrgent = timeLimit > 0 && remaining <= 5;
+
   return (
     <div className="w-full max-w-md mx-auto animate-slide-up">
+      {/* Timer display */}
+      {timeLimit > 0 && (
+        <div className={`text-center mb-3 font-orbitron text-3xl font-bold transition-colors ${
+          isUrgent ? 'text-red-400 animate-pulse' : 'text-neon-yellow'
+        }`}>
+          {remaining}秒
+        </div>
+      )}
+
       {/* Input */}
       <div className="flex gap-2 mb-3">
         <input

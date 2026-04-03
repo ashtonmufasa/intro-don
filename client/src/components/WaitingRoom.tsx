@@ -3,6 +3,14 @@ import { PlayerInfo, GameSettings } from '../App';
 
 const GENRES = ['J-Pop', 'Pop', 'Rock', 'R&B', 'Hip-Hop', 'Anime', 'Electronic', 'K-Pop'];
 const DECADES = ['1980s', '1990s', '2000s', '2010s', '2020s'];
+const TIME_LIMITS = [
+  { value: 0, label: '無制限' },
+  { value: 5, label: '5秒' },
+  { value: 10, label: '10秒' },
+  { value: 15, label: '15秒' },
+  { value: 20, label: '20秒' },
+  { value: 30, label: '30秒' },
+];
 
 interface WaitingRoomProps {
   roomId: string;
@@ -211,6 +219,27 @@ export default function WaitingRoom({
                 } ${isHost ? 'hover:border-neon-cyan/50 cursor-pointer' : 'cursor-default'}`}
               >
                 {d}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Answer time limit */}
+        <div className="mb-5">
+          <label className="block text-sm text-gray-300 mb-2">回答制限時間</label>
+          <div className="flex flex-wrap gap-2">
+            {TIME_LIMITS.map(t => (
+              <button
+                key={t.value}
+                onClick={() => isHost && onUpdateSettings({ answerTimeLimit: t.value })}
+                disabled={!isHost}
+                className={`px-3 py-1.5 rounded-full text-sm transition-all ${
+                  (settings.answerTimeLimit ?? 0) === t.value
+                    ? 'bg-neon-yellow/30 text-neon-yellow border border-neon-yellow/50'
+                    : 'bg-dark-card text-gray-400 border border-gray-600'
+                } ${isHost ? 'hover:border-neon-yellow/50 cursor-pointer' : 'cursor-default'}`}
+              >
+                {t.label}
               </button>
             ))}
           </div>

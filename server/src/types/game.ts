@@ -11,6 +11,7 @@ export interface GameSettings {
   decades: string[];
   artistName: string;
   questionCount: number;
+  answerTimeLimit: number; // seconds (0 = unlimited)
 }
 
 export interface QuestionData {
@@ -55,6 +56,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   decades: ['2020s'],
   artistName: '',
   questionCount: 10,
+  answerTimeLimit: 0, // 0 = unlimited
 };
 
 // Artist lists per genre x decade for accurate search

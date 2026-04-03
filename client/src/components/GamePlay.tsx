@@ -10,7 +10,7 @@ import AnswerInput from './AnswerInput';
 interface GamePlayProps {
   nickname: string;
   players: PlayerInfo[];
-  gamePhase: 'loading' | 'countdown' | 'playing' | 'buzzer-won' | 'answering' | 'result' | 'time-up' | 'passed';
+  gamePhase: 'loading' | 'countdown' | 'playing' | 'buzzer-won' | 'answering' | 'result' | 'time-up' | 'passed' | 'wrong-transfer';
   questionNumber: number;
   totalQuestions: number;
   countdownNum: number;
@@ -19,6 +19,8 @@ interface GamePlayProps {
   lastResult: QuestionResult | null;
   isPlaying: boolean;
   myPassed: boolean;
+  wrongPlayerNickname: string | null;
+  answerTimeLimit: number;
   onPressBuzzer: () => void;
   onSubmitAnswer: (answer: string) => void;
   onPass: () => void;
@@ -27,7 +29,7 @@ interface GamePlayProps {
 export default function GamePlay({
   nickname, players, gamePhase, questionNumber, totalQuestions,
   countdownNum, buzzerWinner, isMyBuzzer, lastResult, isPlaying,
-  myPassed, onPressBuzzer, onSubmitAnswer, onPass,
+  myPassed, wrongPlayerNickname, answerTimeLimit, onPressBuzzer, onSubmitAnswer, onPass,
 }: GamePlayProps) {
   const shakeRef = useRef<HTMLDivElement>(null);
   const confettiFired = useRef(false);
@@ -48,7 +50,8 @@ export default function GamePlay({
   }, [gamePhase, lastResult]);
 
   useEffect(() => {
-    if ((gamePhase === 'result' && lastResult && !lastResult.isCorrect) || gamePhase === 'time-up' || gamePhase === 'passed') {
+    if (gamePhase === 'wrong-transfer' || gamePhase === 'time-up' || gamePhase === 'passed' ||
+        (gamePhase === 'result' && lastResult && !lastResult.isCorrect)) {
       shakeRef.current?.classList.add('shake');
       setTimeout(() => shakeRef.current?.classList.remove('shake'), 500);
     }
@@ -113,11 +116,45 @@ export default function GamePlay({
           <div className="text-center w-full">
             <div className="text-4xl mb-3">&#128276;</div>
             <p className="text-xl font-bold text-neon-pink mb-4">あなたの回答！</p>
-            <AnswerInput onSubmit={onSubmitAnswer} onPass={onPass} />
+            <AnswerInput
+              onSubmit={onSubmitAnswer}
+              onPass={onPass}
+              timeLimit={answerTimeLimit}
+            />
           </div>
         )}
 
-        {/* Result / Time-up / Passed */}
+        {/* Wrong answer — transferring to other player (NO answer reveal) */}
+        {gamePhase === 'wrong-transfer' && (
+          <div className="text-center animate-slide-up w-full">
+            <div className="text-6xl mb-3">&#10060;</div>
+            <p className="text-2xl font-bold text-red-400 mb-3">
+              {wrongPlayerNickname === nickname ? 'あなた' : wrongPlayerNickname} の不正解...
+            </p>
+            <div className="bg-dark-surface rounded-2xl p-4 border border-neon-yellow/30 inline-block">
+              <p className="text-neon-yellow font-bold text-lg animate-pulse">
+                &#10145; 相手に解答権が移ります
+              </p>
+            </div>
+            {/* Wrong player shown as grayed out */}
+            <div className="mt-4 flex justify-center gap-4">
+              {players.map((p, i) => (
+                <div
+                  key={i}
+                  className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                    p.nickname === wrongPlayerNickname
+                      ? 'bg-gray-800 text-gray-600 opacity-40 line-through'
+                      : 'bg-neon-cyan/20 text-neon-cyan border border-neon-cyan/50'
+                  }`}
+                >
+                  {p.nickname}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Result / Time-up / Passed — answer IS revealed (question over) */}
         {(gamePhase === 'result' || gamePhase === 'time-up' || gamePhase === 'passed') && lastResult && (
           <div className="text-center animate-slide-up w-full">
             {gamePhase === 'passed' ? (
@@ -137,7 +174,7 @@ export default function GamePlay({
             }`}>
               {gamePhase === 'passed' ? '両者パス' :
                gamePhase === 'time-up' ? 'タイムアップ！' :
-               lastResult.isCorrect ? '正解！' : '不正解...'}
+               lastResult.isCorrect ? '正解！' : '両者不正解...'}
             </p>
 
             {lastResult.buzzWinner && lastResult.answer && (

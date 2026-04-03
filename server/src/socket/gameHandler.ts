@@ -94,6 +94,16 @@ export function registerGameHandlers(io: Server, socket: Socket) {
       winnerNickname: winner.nickname,
       winnerId: socket.id,
     });
+
+    // Start answer timer if time limit is set
+    const timeLimit = room.settings.answerTimeLimit;
+    if (timeLimit > 0) {
+      if (room.answerTimer) clearTimeout(room.answerTimer);
+      room.answerTimer = setTimeout(() => {
+        // Time's up for this answerer — treat as wrong answer
+        handleAnswerTimeout(io, data.roomId, socket.id);
+      }, timeLimit * 1000);
+    }
   });
 
   // Answer submit
@@ -117,51 +127,83 @@ export function registerGameHandlers(io: Server, socket: Socket) {
       player.score += 1;
     }
 
-    const result: QuestionResult = {
-      questionIndex: room.currentQuestion,
-      trackName: currentQ.trackName,
-      artistName: currentQ.artistName,
-      albumImageUrl: currentQ.albumImageUrl,
-      buzzWinner: player?.nickname || null,
-      answer: data.answer,
-      isCorrect,
-      correctAnswer: currentQ.trackName,
-    };
-    room.questionResults.push(result);
-
-    io.to(data.roomId).emit('game:answer-result', {
-      ...result,
-      players: room.players.map(p => ({ nickname: p.nickname, isHost: p.isHost, score: p.score })),
-    });
-
     if (!isCorrect) {
-      // Wrong answer — mark player as done, check if other player can still answer
-      setTimeout(() => {
-        if (!room) return;
-        if (!room.passedPlayers.includes(socket.id)) {
-          room.passedPlayers.push(socket.id);
-        }
+      // Wrong answer — DO NOT show the correct answer yet!
+      // Mark this player as done
+      if (!room.passedPlayers.includes(socket.id)) {
+        room.passedPlayers.push(socket.id);
+      }
 
-        const allDone = room.players.every(p => room.passedPlayers.includes(p.id));
-        if (allDone) {
-          setTimeout(() => advanceQuestion(io, data.roomId), 1500);
-        } else {
-          // Re-open buzzer for other player and re-send audio
+      const allDone = room.players.every(p => room.passedPlayers.includes(p.id));
+
+      if (allDone) {
+        // Both players failed — NOW show the answer (question is over)
+        const result: QuestionResult = {
+          questionIndex: room.currentQuestion,
+          trackName: currentQ.trackName,
+          artistName: currentQ.artistName,
+          albumImageUrl: currentQ.albumImageUrl,
+          buzzWinner: player?.nickname || null,
+          answer: data.answer,
+          isCorrect: false,
+          correctAnswer: currentQ.trackName,
+        };
+        room.questionResults.push(result);
+
+        io.to(data.roomId).emit('game:answer-result', {
+          ...result,
+          showAnswer: true,
+          bothFailed: true,
+          players: room.players.map(p => ({ nickname: p.nickname, isHost: p.isHost, score: p.score })),
+        });
+
+        setTimeout(() => advanceQuestion(io, data.roomId), 3000);
+      } else {
+        // Other player still has a chance — show wrong feedback WITHOUT answer
+        io.to(data.roomId).emit('game:wrong-no-reveal', {
+          wrongPlayerNickname: player?.nickname || '',
+          answer: data.answer,
+          players: room.players.map(p => ({ nickname: p.nickname, isHost: p.isHost, score: p.score })),
+        });
+
+        // After brief delay, transfer buzzer to the other player
+        setTimeout(() => {
+          if (!room) return;
           room.buzzerLocked = false;
           room.buzzerWinner = null;
 
           const currentQuestion = room.questions[room.currentQuestion];
           io.to(data.roomId).emit('game:answer-turn-changed', {
-            message: '相手に回答権が移りました',
+            message: '相手に解答権が移ります',
+            wrongPlayerNickname: player?.nickname || '',
             previewUrl: currentQuestion?.previewUrl || '',
             questionNumber: room.currentQuestion + 1,
             totalQuestions: room.questions.length,
             players: room.players.map(p => ({ nickname: p.nickname, isHost: p.isHost, score: p.score })),
           });
-        }
-      }, 2000);
+        }, 2000);
+      }
     } else {
-      // Correct — move to next question
+      // Correct — show answer and move on
+      const result: QuestionResult = {
+        questionIndex: room.currentQuestion,
+        trackName: currentQ.trackName,
+        artistName: currentQ.artistName,
+        albumImageUrl: currentQ.albumImageUrl,
+        buzzWinner: player?.nickname || null,
+        answer: data.answer,
+        isCorrect: true,
+        correctAnswer: currentQ.trackName,
+      };
+      room.questionResults.push(result);
+
+      io.to(data.roomId).emit('game:answer-result', {
+        ...result,
+        showAnswer: true,
+        bothFailed: false,
+        players: room.players.map(p => ({ nickname: p.nickname, isHost: p.isHost, score: p.score })),
+      });
+
       setTimeout(() => advanceQuestion(io, data.roomId), 3000);
     }
   });
@@ -170,6 +212,11 @@ export function registerGameHandlers(io: Server, socket: Socket) {
   socket.on('buzzer:pass', (data: { roomId: string }) => {
     const room = rooms.get(data.roomId);
     if (!room || room.state !== 'playing') return;
+
+    if (room.answerTimer) {
+      clearTimeout(room.answerTimer);
+      room.answerTimer = null;
+    }
 
     if (room.buzzerWinner === socket.id) {
       room.buzzerWinner = null;
@@ -239,6 +286,69 @@ export function registerGameHandlers(io: Server, socket: Socket) {
   });
 }
 
+function handleAnswerTimeout(io: Server, roomId: string, playerId: string) {
+  const room = rooms.get(roomId);
+  if (!room || room.state !== 'playing') return;
+  if (room.buzzerWinner !== playerId) return;
+
+  const currentQ = room.questions[room.currentQuestion];
+  if (!currentQ) return;
+
+  const player = room.players.find(p => p.id === playerId);
+
+  // Mark as failed
+  if (!room.passedPlayers.includes(playerId)) {
+    room.passedPlayers.push(playerId);
+  }
+
+  const allDone = room.players.every(p => room.passedPlayers.includes(p.id));
+
+  if (allDone) {
+    const result: QuestionResult = {
+      questionIndex: room.currentQuestion,
+      trackName: currentQ.trackName,
+      artistName: currentQ.artistName,
+      albumImageUrl: currentQ.albumImageUrl,
+      buzzWinner: player?.nickname || null,
+      answer: null,
+      isCorrect: false,
+      correctAnswer: currentQ.trackName,
+    };
+    room.questionResults.push(result);
+
+    io.to(roomId).emit('game:time-up', {
+      ...result,
+      players: room.players.map(p => ({ nickname: p.nickname, isHost: p.isHost, score: p.score })),
+    });
+
+    setTimeout(() => advanceQuestion(io, roomId), 3000);
+  } else {
+    // Time's up for this player, transfer to other
+    io.to(roomId).emit('game:wrong-no-reveal', {
+      wrongPlayerNickname: player?.nickname || '',
+      answer: null,
+      isTimeUp: true,
+      players: room.players.map(p => ({ nickname: p.nickname, isHost: p.isHost, score: p.score })),
+    });
+
+    setTimeout(() => {
+      if (!room) return;
+      room.buzzerLocked = false;
+      room.buzzerWinner = null;
+
+      const currentQuestion = room.questions[room.currentQuestion];
+      io.to(roomId).emit('game:answer-turn-changed', {
+        message: '相手に解答権が移ります',
+        wrongPlayerNickname: player?.nickname || '',
+        previewUrl: currentQuestion?.previewUrl || '',
+        questionNumber: room.currentQuestion + 1,
+        totalQuestions: room.questions.length,
+        players: room.players.map(p => ({ nickname: p.nickname, isHost: p.isHost, score: p.score })),
+      });
+    }, 2000);
+  }
+}
+
 function startQuestion(io: Server, roomId: string) {
   const room = rooms.get(roomId);
   if (!room) return;
@@ -247,6 +357,11 @@ function startQuestion(io: Server, roomId: string) {
   room.buzzerLocked = true;
   room.buzzerWinner = null;
   room.passedPlayers = [];
+
+  if (room.answerTimer) {
+    clearTimeout(room.answerTimer);
+    room.answerTimer = null;
+  }
 
   const qIndex = room.currentQuestion;
   const question = room.questions[qIndex];

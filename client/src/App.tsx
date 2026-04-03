@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSocket } from './hooks/useSocket';
 import { useAudio } from './hooks/useAudio';
+import { useSoundEffects } from './hooks/useSoundEffects';
 import TopPage from './components/TopPage';
 import WaitingRoom from './components/WaitingRoom';
 import GamePlay from './components/GamePlay';
@@ -18,6 +19,7 @@ export interface GameSettings {
   decades: string[];
   artistName: string;
   questionCount: number;
+  answerTimeLimit: number; // seconds (0 = unlimited)
 }
 
 export interface QuestionResult {
@@ -36,6 +38,7 @@ type Screen = 'top' | 'waiting' | 'game' | 'result';
 function App() {
   const { connected, emit, on, off } = useSocket();
   const audio = useAudio();
+  const sfx = useSoundEffects();
 
   const [screen, setScreen] = useState<Screen>('top');
   const [nickname, setNickname] = useState('');
@@ -48,11 +51,12 @@ function App() {
     decades: ['2020s'],
     artistName: '',
     questionCount: 10,
+    answerTimeLimit: 0,
   });
   const [error, setError] = useState('');
 
   // Game state
-  const [gamePhase, setGamePhase] = useState<'loading' | 'countdown' | 'playing' | 'buzzer-won' | 'answering' | 'result' | 'time-up' | 'passed'>('loading');
+  const [gamePhase, setGamePhase] = useState<'loading' | 'countdown' | 'playing' | 'buzzer-won' | 'answering' | 'result' | 'time-up' | 'passed' | 'wrong-transfer'>('loading');
   const [questionNumber, setQuestionNumber] = useState(0);
   const [totalQuestions, setTotalQuestions] = useState(0);
   const [countdownNum, setCountdownNum] = useState(3);
@@ -60,6 +64,8 @@ function App() {
   const [isMyBuzzer, setIsMyBuzzer] = useState(false);
   const [lastResult, setLastResult] = useState<QuestionResult | null>(null);
   const [myPassed, setMyPassed] = useState(false);
+  const [wrongPlayerNickname, setWrongPlayerNickname] = useState<string | null>(null);
+  const [answerTimeLimit, setAnswerTimeLimit] = useState(0);
 
   // Result state
   const [finalResults, setFinalResults] = useState<QuestionResult[]>([]);
@@ -95,9 +101,10 @@ function App() {
       setScreen('game');
     }));
 
-    cleanups.push(on('game:started', (data: { totalQuestions: number; players: PlayerInfo[] }) => {
+    cleanups.push(on('game:started', (data: { totalQuestions: number; players: PlayerInfo[]; settings: GameSettings }) => {
       setTotalQuestions(data.totalQuestions);
       setPlayers(data.players);
+      setAnswerTimeLimit(data.settings.answerTimeLimit || 0);
       setScreen('game');
     }));
 
@@ -109,10 +116,12 @@ function App() {
       setIsMyBuzzer(false);
       setLastResult(null);
       setMyPassed(false);
+      setWrongPlayerNickname(null);
 
       setCountdownNum(3);
-      setTimeout(() => setCountdownNum(2), 1000);
-      setTimeout(() => setCountdownNum(1), 2000);
+      sfx.playCountdownBeep(3);
+      setTimeout(() => { setCountdownNum(2); sfx.playCountdownBeep(2); }, 1000);
+      setTimeout(() => { setCountdownNum(1); sfx.playCountdownBeep(1); }, 2000);
     }));
 
     cleanups.push(on('game:play-intro', (data: { questionNumber: number; totalQuestions: number; previewUrl: string }) => {
@@ -129,13 +138,28 @@ function App() {
       setGamePhase(isMine ? 'answering' : 'buzzer-won');
     }));
 
-    cleanups.push(on('game:answer-result', (data: QuestionResult & { players: PlayerInfo[] }) => {
+    // Answer result (question is OVER — correct, or both failed)
+    cleanups.push(on('game:answer-result', (data: QuestionResult & { players: PlayerInfo[]; showAnswer: boolean; bothFailed: boolean }) => {
       setGamePhase('result');
       setLastResult(data);
       setPlayers(data.players);
+      if (data.isCorrect) {
+        sfx.playCorrectSound();
+      } else {
+        sfx.playWrongSound();
+      }
     }));
 
-    cleanups.push(on('game:answer-turn-changed', (data: { message: string; previewUrl: string; questionNumber: number; totalQuestions: number; players: PlayerInfo[] }) => {
+    // Wrong answer but question continues (other player gets a turn)
+    cleanups.push(on('game:wrong-no-reveal', (data: { wrongPlayerNickname: string; answer: string | null; players: PlayerInfo[]; isTimeUp?: boolean }) => {
+      audio.stop();
+      setGamePhase('wrong-transfer');
+      setWrongPlayerNickname(data.wrongPlayerNickname);
+      setPlayers(data.players);
+      sfx.playWrongSound();
+    }));
+
+    cleanups.push(on('game:answer-turn-changed', (data: { message: string; wrongPlayerNickname: string; previewUrl: string; questionNumber: number; totalQuestions: number; players: PlayerInfo[] }) => {
       setPlayers(data.players);
       setGamePhase('playing');
       setQuestionNumber(data.questionNumber);
@@ -143,6 +167,7 @@ function App() {
       setBuzzerWinner(null);
       setIsMyBuzzer(false);
       setLastResult(null);
+      setWrongPlayerNickname(null);
       if (data.previewUrl) {
         audio.play(data.previewUrl);
       }
@@ -193,7 +218,7 @@ function App() {
     return () => {
       cleanups.forEach(cleanup => cleanup());
     };
-  }, [on, nickname, audio]);
+  }, [on, nickname, audio, sfx]);
 
   const createRoom = useCallback((nick: string) => {
     setNickname(nick);
@@ -301,6 +326,8 @@ function App() {
           lastResult={lastResult}
           isPlaying={audio.isPlaying}
           myPassed={myPassed}
+          wrongPlayerNickname={wrongPlayerNickname}
+          answerTimeLimit={answerTimeLimit}
           onPressBuzzer={pressBuzzer}
           onSubmitAnswer={submitAnswer}
           onPass={passBuzzer}
