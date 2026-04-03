@@ -41,20 +41,58 @@ function filterValidTracks(tracks: DeezerTrack[]): DeezerTrack[] {
   return tracks.filter(t => t.preview && t.preview.length > 0);
 }
 
-// Search by artist name for accurate results
 async function searchByArtist(artistName: string, limit: number = 25): Promise<DeezerTrack[]> {
   const tracks = await searchDeezer(`artist:"${artistName}"`, limit);
   const valid = filterValidTracks(tracks);
   if (valid.length > 0) return valid;
-  // Fallback without quotes
   const fallback = await searchDeezer(artistName, limit);
   return filterValidTracks(fallback);
 }
 
-// Fetch questions by artist name (artist mode)
+// Select tracks ensuring no duplicate artists (Fix 2)
+function selectWithArtistDedup(tracks: DeezerTrack[], count: number): DeezerTrack[] {
+  const shuffled = shuffleArray(tracks);
+  const selected: DeezerTrack[] = [];
+  const usedArtists = new Set<string>();
+
+  // First pass: one song per artist
+  for (const track of shuffled) {
+    if (selected.length >= count) break;
+    const artistKey = track.artist.name.toLowerCase();
+    if (!usedArtists.has(artistKey)) {
+      usedArtists.add(artistKey);
+      selected.push(track);
+    }
+  }
+
+  // If not enough, allow duplicates
+  if (selected.length < count) {
+    for (const track of shuffled) {
+      if (selected.length >= count) break;
+      if (!selected.some(s => s.id === track.id)) {
+        selected.push(track);
+      }
+    }
+  }
+
+  return selected;
+}
+
+function toQuestionData(tracks: DeezerTrack[]): QuestionData[] {
+  return tracks.map(track => ({
+    id: track.id,
+    previewUrl: track.preview,
+    trackName: track.title,
+    artistName: track.artist.name,
+    albumImageUrl: track.album.cover_medium,
+  }));
+}
+
+// Fetch questions by artist name (artist mode) — Fix 3: support decades
 export async function fetchQuestionsByArtist(
   artistName: string,
-  count: number
+  count: number,
+  decades: string[] = []
 ): Promise<QuestionData[]> {
   const allTracks: Map<number, DeezerTrack> = new Map();
 
@@ -64,7 +102,21 @@ export async function fetchQuestionsByArtist(
     allTracks.set(track.id, track);
   }
 
-  // If not enough, try broader search
+  // Also search with decade keywords if specified
+  if (decades.length > 0) {
+    for (const decade of decades) {
+      const decadeKeywords = DECADE_KEYWORDS[decade] || [];
+      for (const dk of decadeKeywords.slice(0, 2)) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+        const moreTracks = await searchDeezer(`${artistName} ${dk}`, 30);
+        for (const track of filterValidTracks(moreTracks)) {
+          allTracks.set(track.id, track);
+        }
+      }
+    }
+  }
+
+  // If not enough, broader search
   if (allTracks.size < count) {
     await new Promise(resolve => setTimeout(resolve, 300));
     const moreTracks = await searchDeezer(artistName, 50);
@@ -76,16 +128,10 @@ export async function fetchQuestionsByArtist(
   const shuffled = shuffleArray([...allTracks.values()]);
   const selected = shuffled.slice(0, count);
 
-  return selected.map(track => ({
-    id: track.id,
-    previewUrl: track.preview,
-    trackName: track.title,
-    artistName: track.artist.name,
-    albumImageUrl: track.album.cover_medium,
-  }));
+  return toQuestionData(selected);
 }
 
-// Fetch questions by genre + decade (genre mode) - improved with artist lists
+// Fetch questions by genre + decade — with artist dedup (Fix 2)
 export async function fetchQuestions(
   genres: string[],
   decades: string[],
@@ -93,7 +139,7 @@ export async function fetchQuestions(
 ): Promise<QuestionData[]> {
   const allTracks: Map<number, DeezerTrack> = new Map();
 
-  // Collect artists from the GENRE_DECADE_ARTISTS mapping
+  // Collect artists from mapping
   const artists: string[] = [];
   for (const genre of genres) {
     const genreArtists = GENRE_DECADE_ARTISTS[genre];
@@ -106,7 +152,6 @@ export async function fetchQuestions(
           }
         }
       } else {
-        // All decades
         for (const decadeArtists of Object.values(genreArtists)) {
           artists.push(...decadeArtists);
         }
@@ -114,11 +159,9 @@ export async function fetchQuestions(
     }
   }
 
-  // Deduplicate and shuffle artists
   const uniqueArtists = shuffleArray([...new Set(artists)]);
 
   if (uniqueArtists.length > 0) {
-    // Search by artist names (much more accurate than keyword search)
     const batchSize = 3;
     for (let i = 0; i < uniqueArtists.length && allTracks.size < count * 3; i += batchSize) {
       const batch = uniqueArtists.slice(i, i + batchSize);
@@ -136,7 +179,7 @@ export async function fetchQuestions(
     }
   }
 
-  // Fallback to keyword search if not enough tracks
+  // Fallback keyword search
   if (allTracks.size < count) {
     const queries: string[] = [];
     for (const genre of genres) {
@@ -165,16 +208,9 @@ export async function fetchQuestions(
     }
   }
 
-  const shuffled = shuffleArray([...allTracks.values()]);
-  const selected = shuffled.slice(0, count);
-
-  return selected.map(track => ({
-    id: track.id,
-    previewUrl: track.preview,
-    trackName: track.title,
-    artistName: track.artist.name,
-    albumImageUrl: track.album.cover_medium,
-  }));
+  // Use artist-dedup selection
+  const selected = selectWithArtistDedup([...allTracks.values()], count);
+  return toQuestionData(selected);
 }
 
 export async function handleSearch(query: string, limit: number = 25) {

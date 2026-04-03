@@ -30,20 +30,18 @@ export function registerGameHandlers(io: Server, socket: Socket) {
     room.questionResults = [];
     room.currentQuestion = -1;
 
-    // Notify that we're loading questions
     io.to(data.roomId).emit('game:loading', { message: '楽曲を読み込み中...' });
 
     try {
       let questions;
 
       if (room.settings.mode === 'artist' && room.settings.artistName.trim()) {
-        // Artist mode
         questions = await fetchQuestionsByArtist(
           room.settings.artistName.trim(),
-          room.settings.questionCount
+          room.settings.questionCount,
+          room.settings.decades
         );
       } else {
-        // Genre mode
         questions = await fetchQuestions(
           room.settings.genres,
           room.settings.decades,
@@ -84,11 +82,8 @@ export function registerGameHandlers(io: Server, socket: Socket) {
     const room = rooms.get(data.roomId);
     if (!room || room.state !== 'playing') return;
     if (room.buzzerLocked) return;
-
-    // Check if this player already passed
     if (room.passedPlayers.includes(socket.id)) return;
 
-    // First press wins
     room.buzzerLocked = true;
     room.buzzerWinner = socket.id;
 
@@ -99,8 +94,6 @@ export function registerGameHandlers(io: Server, socket: Socket) {
       winnerNickname: winner.nickname,
       winnerId: socket.id,
     });
-
-    // No answer timer — unlimited time
   });
 
   // Answer submit
@@ -141,26 +134,28 @@ export function registerGameHandlers(io: Server, socket: Socket) {
       players: room.players.map(p => ({ nickname: p.nickname, isHost: p.isHost, score: p.score })),
     });
 
-    // If wrong answer, give the other player a chance (unlock buzzer)
     if (!isCorrect) {
+      // Wrong answer — mark player as done, check if other player can still answer
       setTimeout(() => {
         if (!room) return;
-        // Add this player to passed (they got it wrong, can't buzz again)
         if (!room.passedPlayers.includes(socket.id)) {
           room.passedPlayers.push(socket.id);
         }
 
-        // Check if all players have either passed or answered wrong
         const allDone = room.players.every(p => room.passedPlayers.includes(p.id));
         if (allDone) {
-          // Skip to next question
           setTimeout(() => advanceQuestion(io, data.roomId), 1500);
         } else {
-          // Re-open buzzer for other player
+          // Re-open buzzer for other player and re-send audio
           room.buzzerLocked = false;
           room.buzzerWinner = null;
+
+          const currentQuestion = room.questions[room.currentQuestion];
           io.to(data.roomId).emit('game:answer-turn-changed', {
             message: '相手に回答権が移りました',
+            previewUrl: currentQuestion?.previewUrl || '',
+            questionNumber: room.currentQuestion + 1,
+            totalQuestions: room.questions.length,
             players: room.players.map(p => ({ nickname: p.nickname, isHost: p.isHost, score: p.score })),
           });
         }
@@ -171,17 +166,15 @@ export function registerGameHandlers(io: Server, socket: Socket) {
     }
   });
 
-  // Pass (during buzzer phase or answering phase)
+  // Pass
   socket.on('buzzer:pass', (data: { roomId: string }) => {
     const room = rooms.get(data.roomId);
     if (!room || room.state !== 'playing') return;
 
-    // If this player is currently answering, they forfeit answer
     if (room.buzzerWinner === socket.id) {
       room.buzzerWinner = null;
     }
 
-    // Mark player as passed
     if (!room.passedPlayers.includes(socket.id)) {
       room.passedPlayers.push(socket.id);
     }
@@ -195,10 +188,8 @@ export function registerGameHandlers(io: Server, socket: Socket) {
       }),
     });
 
-    // Check if all players have passed
     const allPassed = room.players.every(p => room.passedPlayers.includes(p.id));
     if (allPassed) {
-      // Both passed — show correct answer and skip
       room.buzzerLocked = true;
       const currentQ = room.questions[room.currentQuestion];
       if (!currentQ) return;
@@ -222,7 +213,6 @@ export function registerGameHandlers(io: Server, socket: Socket) {
 
       setTimeout(() => advanceQuestion(io, data.roomId), 3000);
     } else {
-      // One player passed, other can still buzz
       room.buzzerLocked = false;
       room.buzzerWinner = null;
     }
@@ -262,13 +252,11 @@ function startQuestion(io: Server, roomId: string) {
   const question = room.questions[qIndex];
   if (!question) return;
 
-  // Send countdown
   io.to(roomId).emit('game:countdown', {
     questionNumber: qIndex + 1,
     totalQuestions: room.questions.length,
   });
 
-  // After countdown (3 seconds), play intro — no time limit
   setTimeout(() => {
     room.buzzerLocked = false;
 
@@ -277,8 +265,6 @@ function startQuestion(io: Server, roomId: string) {
       totalQuestions: room.questions.length,
       previewUrl: question.previewUrl,
     });
-
-    // No question timer — unlimited listening time
   }, 3000);
 }
 

@@ -135,12 +135,17 @@ function App() {
       setPlayers(data.players);
     }));
 
-    cleanups.push(on('game:answer-turn-changed', (data: { message: string; players: PlayerInfo[] }) => {
+    cleanups.push(on('game:answer-turn-changed', (data: { message: string; previewUrl: string; questionNumber: number; totalQuestions: number; players: PlayerInfo[] }) => {
       setPlayers(data.players);
       setGamePhase('playing');
+      setQuestionNumber(data.questionNumber);
+      setTotalQuestions(data.totalQuestions);
       setBuzzerWinner(null);
       setIsMyBuzzer(false);
-      // Re-play audio? The intro already stopped. Player can still buzz.
+      setLastResult(null);
+      if (data.previewUrl) {
+        audio.play(data.previewUrl);
+      }
     }));
 
     cleanups.push(on('game:player-passed', (data: { nickname: string; passedPlayers: string[] }) => {

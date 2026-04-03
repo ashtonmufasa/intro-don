@@ -157,52 +157,30 @@ export default function WaitingRoom({
           </div>
         </div>
 
-        {/* Genre mode settings */}
+        {/* Genre mode: genre selector */}
         {settings.mode === 'genre' && (
-          <>
-            <div className="mb-5">
-              <label className="block text-sm text-gray-300 mb-2">ジャンル</label>
-              <div className="flex flex-wrap gap-2">
-                {GENRES.map(g => (
-                  <button
-                    key={g}
-                    onClick={() => isHost && toggleGenre(g)}
-                    disabled={!isHost}
-                    className={`px-3 py-1.5 rounded-full text-sm transition-all ${
-                      settings.genres.includes(g)
-                        ? 'bg-neon-pink/30 text-neon-pink border border-neon-pink/50'
-                        : 'bg-dark-card text-gray-400 border border-gray-600'
-                    } ${isHost ? 'hover:border-neon-pink/50 cursor-pointer' : 'cursor-default'}`}
-                  >
-                    {g}
-                  </button>
-                ))}
-              </div>
+          <div className="mb-5">
+            <label className="block text-sm text-gray-300 mb-2">ジャンル</label>
+            <div className="flex flex-wrap gap-2">
+              {GENRES.map(g => (
+                <button
+                  key={g}
+                  onClick={() => isHost && toggleGenre(g)}
+                  disabled={!isHost}
+                  className={`px-3 py-1.5 rounded-full text-sm transition-all ${
+                    settings.genres.includes(g)
+                      ? 'bg-neon-pink/30 text-neon-pink border border-neon-pink/50'
+                      : 'bg-dark-card text-gray-400 border border-gray-600'
+                  } ${isHost ? 'hover:border-neon-pink/50 cursor-pointer' : 'cursor-default'}`}
+                >
+                  {g}
+                </button>
+              ))}
             </div>
-
-            <div className="mb-5">
-              <label className="block text-sm text-gray-300 mb-2">年代</label>
-              <div className="flex flex-wrap gap-2">
-                {DECADES.map(d => (
-                  <button
-                    key={d}
-                    onClick={() => isHost && toggleDecade(d)}
-                    disabled={!isHost}
-                    className={`px-3 py-1.5 rounded-full text-sm transition-all ${
-                      settings.decades.includes(d)
-                        ? 'bg-neon-cyan/30 text-neon-cyan border border-neon-cyan/50'
-                        : 'bg-dark-card text-gray-400 border border-gray-600'
-                    } ${isHost ? 'hover:border-neon-cyan/50 cursor-pointer' : 'cursor-default'}`}
-                  >
-                    {d}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </>
+          </div>
         )}
 
-        {/* Artist mode settings */}
+        {/* Artist mode: artist name input */}
         {settings.mode === 'artist' && (
           <div className="mb-5">
             <label className="block text-sm text-gray-300 mb-2">アーティスト名</label>
@@ -216,6 +194,27 @@ export default function WaitingRoom({
             />
           </div>
         )}
+
+        {/* Decade selector - shown in both modes */}
+        <div className="mb-5">
+          <label className="block text-sm text-gray-300 mb-2">年代</label>
+          <div className="flex flex-wrap gap-2">
+            {DECADES.map(d => (
+              <button
+                key={d}
+                onClick={() => isHost && toggleDecade(d)}
+                disabled={!isHost}
+                className={`px-3 py-1.5 rounded-full text-sm transition-all ${
+                  settings.decades.includes(d)
+                    ? 'bg-neon-cyan/30 text-neon-cyan border border-neon-cyan/50'
+                    : 'bg-dark-card text-gray-400 border border-gray-600'
+                } ${isHost ? 'hover:border-neon-cyan/50 cursor-pointer' : 'cursor-default'}`}
+              >
+                {d}
+              </button>
+            ))}
+          </div>
+        </div>
 
         {/* Question count slider */}
         <div className="mb-2">
